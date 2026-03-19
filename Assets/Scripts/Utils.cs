@@ -41,18 +41,22 @@ public static class Utils
         }
 
         Vector2 availableAreaSize = parentToFitTo.rect.size;
+        Vector2 targetSize = t.rect.size;
 
-        RectTransform targetRect = t;
-        while (targetRect.sizeDelta.x * targetRect.localScale.x > availableAreaSize.x || targetRect.sizeDelta.y * targetRect.transform.localScale.y > availableAreaSize.y)
+        if (targetSize.x <= 0f || targetSize.y <= 0f || availableAreaSize.x <= 0f || availableAreaSize.y <= 0f)
         {
-            targetRect.transform.localScale -= targetRect.transform.localScale * 1 / 100f;
+            return;
         }
 
-        while (targetRect.sizeDelta.x * targetRect.transform.localScale.x < availableAreaSize.x && targetRect.sizeDelta.y * targetRect.transform.localScale.y < availableAreaSize.y)
+        float scaleX = availableAreaSize.x / targetSize.x;
+        float scaleY = availableAreaSize.y / targetSize.y;
+        float finalScale = Mathf.Min(scaleX, scaleY);
+        if (float.IsNaN(finalScale) || float.IsInfinity(finalScale) || finalScale <= 0f)
         {
-            targetRect.transform.localScale += targetRect.transform.localScale * 1 / 100f;
-
+            return;
         }
+
+        t.localScale = Vector3.one * finalScale;
         if (onComplete != null)
         {
             onComplete.Invoke();

@@ -5,24 +5,24 @@ using UnityEngine;
 using UnityEngine.Events;
 using System.Collections;
 using System.IO;
-using System.Runtime.Serialization.Formatters.Binary;
-using UnityEngine.Experimental.AI;
 
 [System.Serializable]
 public class GameState
 {
+    public int saveVersion = 1;
     public LayoutState layoutState = new LayoutState();
 
     public void SetEmptyLayoutState()
     {
-        layoutState = new LayoutState();
+        this.layoutState = new LayoutState();
+        this.layoutState.solved = false;
     }
 
     [System.Serializable]
     public class LayoutState
     {
         public string layoutID;
-        public bool isSolved;
+        public bool solved = false;
         public int score;
         public int matches;
         public int tries;
@@ -32,7 +32,7 @@ public class GameState
         {
             LayoutState x = new LayoutState();
             x.layoutID = layoutID;
-            x.isSolved = isSolved;
+            x.solved = solved;
             x.score = score;
             x.matches = matches;
             x.tries = tries;
@@ -48,14 +48,14 @@ public class GameState
     [System.Serializable]
     public class CardState
     {
-        public bool isSolved;
+        public bool solved = false;
         public string spriteName;
         public bool isOpen = false;
 
         public CardState Clone()
         {
             CardState x = new CardState();
-            x.isSolved = isSolved;
+            x.solved = solved;
             x.spriteName = spriteName;
             x.isOpen = isOpen;
             return x;
@@ -72,25 +72,30 @@ public class GameState
 
 public class GameManager : MonoBehaviour
 {
+    [SerializeField] bool showLogs = true;
     [Header("OngoingGameState")]
-    public GameState ongoingGameState;
+    [SerializeField]  GameState ongoingGameState;
 
     [Header("Layout stuff")]
     [SerializeField] LayoutSpawner layoutSpawner;
     [SerializeField] List<LayoutSO> levelsLayoutSO = new List<LayoutSO>();
     LayoutSO ongoingLayoutSO;
 
+    public UIManager UIMan => UIManager.Instance;
+
     [Header("gameplay stuff")]
     [SerializeField] List<Card> clickedSequenceOfCards = new List<Card>();
     [SerializeField] int currentScore = 0;
     [SerializeField] int currentMatches = 0;
     [SerializeField] int currentTries = 0;
-    const string nameOfSavedFile = "InitSpinSavedData.dat";
+    const string nameOfSavedFile = "InitSpinSavedData.json";
     bool levelStarted = false;
     int ongoingStreak = 1;
 
     private void OnEnable()
     {
+        GameEvents.OnEnterHome += EnterHome;
+        GameEvents.OnEnterGame += EnterGame;
         GameEvents.OnCheckForLevelCompletion += CheckForLevelCompletion;
         GameEvents.OnLayoutReady += LayoutSpawned;
         GameEvents.OnPlayerClickedShownCard += PlayerClickedShownCard;
@@ -100,7 +105,8 @@ public class GameManager : MonoBehaviour
 
     private void OnDisable()
     {
-        SaveGameState(true);
+        GameEvents.OnEnterHome -= EnterHome;
+        GameEvents.OnEnterGame -= EnterGame;
         GameEvents.OnCheckForLevelCompletion -= CheckForLevelCompletion;
         GameEvents.OnLayoutReady -= LayoutSpawned;
         GameEvents.OnPlayerClickedShownCard -= PlayerClickedShownCard;
@@ -116,11 +122,40 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
+        EnterHome();
+    }
+
+    void EnterHome()
+    {
+        ResetGame();
+        UIMan.ChangeScreen(ScreenName.MainMenu);
+    }
+
+    void ResetGame()
+    {
+        ResetOngoingStreak();
+        ongoingLayoutSO = null;
+        currentMatches = 0;
+        currentScore = 0;
+        currentTries = 0;
+        GameEvents.ResetGameplay();
+    }
+
+    void ResetOngoingStreak()
+    {
+        ongoingStreak = 1;
+    }
+
+    void EnterGame()
+    {
+        ResetGame();
+        ongoingGameState = LoadSavedData();
+        UIMan.ChangeScreen(ScreenName.Gameplay);
         SetCurrentScore(currentScore);
         SetCurrentMatches(currentMatches);
         SetCurrentTries(currentTries);
         bool foundLayoutFromLastGame = false;
-        if (ongoingGameState.layoutState.isSolved == false)
+        if (ongoingGameState.layoutState.solved == false)
         {
             foreach (var x in levelsLayoutSO)
             {
@@ -138,7 +173,7 @@ public class GameManager : MonoBehaviour
         if (foundLayoutFromLastGame == false)
         {
             LoadRandomLayout();
-            SaveGameState(true);
+            SaveGameState();
         }
         Spawn();
     }
@@ -173,13 +208,14 @@ public class GameManager : MonoBehaviour
         if (candidates.Count > 0)
         {
             ongoingLayoutSO = candidates[UnityEngine.Random.Range(0, candidates.Count)];
-        }
+                }
         else
         {
             // No alternative layoutID exists Fall back safely.
             ongoingLayoutSO = ongoingLayoutSO != null ? ongoingLayoutSO : levelsLayoutSO[0];
         }
         ongoingGameState.SetEmptyLayoutState();
+        ongoingGameState.layoutState.layoutID = ongoingLayoutSO.layoutID;
     }
 
     void Spawn()
@@ -191,7 +227,7 @@ public class GameManager : MonoBehaviour
 
     void LayoutSpawned()
     {
-        SFXManager.instance.StopSFX(SFXManager.GameplaySFXType.LayoutOpen);
+        SFXManager.Instance.StopSFX(SFXManager.GameplaySFXType.LayoutOpen);
         foreach (var x in layoutSpawner.InsLayoutHorizontals)
         {
             foreach (var y in x.InsCards)
@@ -212,7 +248,7 @@ public class GameManager : MonoBehaviour
                     {
                         foreach (var y in x.InsCards)
                         {
-                            if (ongoingGameState.layoutState.cardsState[index].isSolved)
+                            if (ongoingGameState.layoutState.cardsState[index].solved)
                             {
                                 cardsOpened = true;
                                 y.SetAsSolvedFromSavedState();
@@ -230,11 +266,12 @@ public class GameManager : MonoBehaviour
                 else
                 {
                     ongoingGameState.SetEmptyLayoutState();
+                    ongoingGameState.layoutState.layoutID = ongoingLayoutSO.layoutID;
                 }
 
                 if (cardsOpened)
                 {
-                    SFXManager.instance.PlaySFX(SFXManager.GameplaySFXType.CardOpen);
+                    SFXManager.Instance.PlaySFX(SFXManager.GameplaySFXType.CardOpen);
                 }
 
 
@@ -247,14 +284,14 @@ public class GameManager : MonoBehaviour
                         {
                             if (index >= ongoingGameState.layoutState.cardsState.Count)
                             {
-                                // Debug.LogError("index bounds layout saved state for index " + index + " name " + y.CardSprite.name);
+                                DebugLog("index bounds layout saved state for index " + index + " name " + y.CardSprite.name);
                                 return false;
                             }
                             else
                             {
                                 if (y.CardSprite.name != ongoingGameState.layoutState.cardsState[index].spriteName)
                                 {
-                                    // Debug.LogError("incorrect layout saved state for index " + index + " name " + y.CardSprite.name);
+                                    DebugLog("incorrect layout saved state for index " + index + " name " + y.CardSprite.name);
                                     return false;
                                 }
                             }
@@ -266,13 +303,13 @@ public class GameManager : MonoBehaviour
             }
 
         }
-        SaveGameState(true);
+        SaveGameState();
         levelStarted = true;
     }
 
     void PlayerClickedShownCard(Card c)
     {
-        SaveGameState(true);
+        SaveGameState();
     }
 
     void PlayerClickedHiddenCard(Card c)
@@ -282,7 +319,7 @@ public class GameManager : MonoBehaviour
             DebugLog(c.transform.name + " already in clickedSequenceOfCards");
             return;
         }
-        SFXManager.instance.PlaySFX(SFXManager.GameplaySFXType.CardOpen);
+        SFXManager.Instance.PlaySFX(SFXManager.GameplaySFXType.CardOpen);
         c.Show();
 
         List<Card> tempCorrectCardsSequence = new List<Card>();
@@ -327,13 +364,13 @@ public class GameManager : MonoBehaviour
         else
         {
             SetCurrentTries(currentTries + 1);
-            ongoingStreak = 1;
+            ResetOngoingStreak();
             List<Card> incorrectCardsSequence = new List<Card>(clickedSequenceOfCards);
             c.HideASAP(incorrectCardsSequence);
 
             clickedSequenceOfCards.Clear();
         }
-        SaveGameState(true);
+        SaveGameState();
     }
 
     void CardFlipFinished(Card c)
@@ -348,7 +385,7 @@ public class GameManager : MonoBehaviour
             {
                 c.ToggleAllowClick(true);
             }
-            SaveGameState(true);
+            SaveGameState();
         }
     }
 
@@ -361,9 +398,9 @@ public class GameManager : MonoBehaviour
         if (IsLevelSolved())
         {
             levelStarted = false;
-            SFXManager.instance.PlaySFXOnce(SFXManager.GameplaySFXType.GameWin);
-            ongoingGameState.layoutState.isSolved = true;
-            SaveGameState(true);
+            SFXManager.Instance.PlaySFXOnce(SFXManager.GameplaySFXType.GameWin);
+            ongoingGameState.layoutState.solved = true;
+            SaveGameState();
             if (ienumRestartLevel != null)
             {
                 StopCoroutine(ienumRestartLevel);
@@ -373,20 +410,33 @@ public class GameManager : MonoBehaviour
         }
         else
         {
-            SaveGameState(true);
+            SaveGameState();
         }
     }
 
-    void SaveGameState(bool writeToDisk = false)
+    void SaveGameState(bool writeToDisk = true)
     {
-        ongoingGameState.layoutState.layoutID = ongoingLayoutSO.layoutID;
-        if (IsLevelSolved())
+        if (ongoingLayoutSO == null)
         {
-            ongoingGameState.layoutState.isSolved = true;
+            return;
+        }
+
+        if (ongoingGameState == null)
+        {
+            ongoingGameState = new GameState();
         }
         else
         {
-            ongoingGameState.layoutState.isSolved = false;
+            ongoingGameState.SetEmptyLayoutState();
+        }
+        ongoingGameState.layoutState.layoutID = ongoingLayoutSO.layoutID;
+        if (IsLevelSolved())
+        {
+            ongoingGameState.layoutState.solved = true;
+        }
+        else
+        {
+            ongoingGameState.layoutState.solved = false;
         }
 
         ongoingGameState.layoutState.score = currentScore;
@@ -398,7 +448,7 @@ public class GameManager : MonoBehaviour
             foreach (var y in x.InsCards)
             {
                 GameState.CardState newCardState = new GameState.CardState();
-                newCardState.isSolved = y.IsSolved;
+                newCardState.solved = y.IsSolved;
                 newCardState.isOpen = y.IsOpen;
                 newCardState.spriteName = y.CardSprite.name;
                 ongoingGameState.layoutState.cardsState.Add(newCardState);
@@ -407,46 +457,58 @@ public class GameManager : MonoBehaviour
 
         if (writeToDisk)
         {
-            BinaryFormatter bf = new BinaryFormatter();
-            FileStream file = File.Create(Application.persistentDataPath + "/" + nameOfSavedFile);
-            bf.Serialize(file, ongoingGameState);
-            file.Close();
+            string path = Path.Combine(Application.persistentDataPath, nameOfSavedFile);
+            ongoingGameState.saveVersion = 1;
+            string json = JsonUtility.ToJson(ongoingGameState, prettyPrint: false);
+            File.WriteAllText(path, json);
+            FileInfo fileInfo = new FileInfo(path);
+            long fileSizeInBytes = fileInfo.Length;
+
+            // Optional: Convert to kilobytes or megabytes
+            float fileSizeInKB = fileSizeInBytes / 1024f;
+            float fileSizeInMB = fileSizeInKB / 1024f;
+
+            DebugLog($"Saved file size: {fileSizeInBytes} bytes ,{fileSizeInKB} KB , {fileSizeInMB} MB");
         }
     }
 
-    [ContextMenu("ResetSavedData")]
-    void ResetSavedData()
+    public static void ResetSavedData()
     {
-        BinaryFormatter bf = new BinaryFormatter();
-        FileStream file = File.Create(Application.persistentDataPath + "/" + nameOfSavedFile);
-        bf.Serialize(file, new GameState());
-        file.Close();
+        string path = Path.Combine(Application.persistentDataPath, nameOfSavedFile);
+        var state = new GameState();
+        state.saveVersion = 1;
+        string json = JsonUtility.ToJson(state, prettyPrint: false);
+        File.WriteAllText(path, json);
     }
 
     GameState LoadSavedData()
     {
-        if (File.Exists(Application.persistentDataPath + "/" + nameOfSavedFile))
+        string path = Path.Combine(Application.persistentDataPath, nameOfSavedFile);
+        if (File.Exists(path))
         {
-            BinaryFormatter bf = new BinaryFormatter();
-            FileStream file = File.Open(Application.persistentDataPath + "/" + nameOfSavedFile, FileMode.Open);
-
-            GameState data = new GameState();
-            GameState l = (GameState)bf.Deserialize(file);
-
-            if (l != null)
+            string json = File.ReadAllText(path);
+            if (!string.IsNullOrWhiteSpace(json))
             {
-                data = l;
+                try
+                {
+                    var loaded = JsonUtility.FromJson<GameState>(json);
+                    if (loaded != null)
+                    {
+                        DebugLog(" InitSpinSavedData loaded!");
+                        return loaded.Clone();
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning($"Failed to load save file, starting fresh. Error: {e.Message}");
+                }
             }
-
-            file.Close();
-            DebugLog(" InitSpinSavedData loaded!");
-            return data.Clone();
         }
         else
         {
             DebugLog("There is no saved InitSpinSavedData data!");
-            return new GameState();
         }
+        return new GameState();
     }
 
     IEnumerator ienumRestartLevel;
@@ -456,9 +518,7 @@ public class GameManager : MonoBehaviour
         SetCurrentScore(0);
         SetCurrentMatches(0);
         SetCurrentTries(0);
-        LoadRandomLayout();
-        SaveGameState(true);
-        Spawn();
+        UIMan.ChangeScreen(ScreenName.MainMenu);
     }
 
     bool IsLevelSolved()
@@ -529,8 +589,7 @@ public class GameManager : MonoBehaviour
 
     void DebugLog(string s)
     {
-        bool shouldLog = false;
-        if (shouldLog)
+        if (showLogs)
         {
             Debug.Log(s);
         }
